@@ -3,6 +3,7 @@ services:
     image: node:24
     working_dir: /app
     tty: true
+    restart: unless-stopped
     ports:
       - "3000:3000"
       - "5555:5555"
@@ -14,7 +15,10 @@ services:
     command: >
       sh -c "npm run dev"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
 
   db:
     image: postgres:16
@@ -27,6 +31,17 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d myapp_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
 
 volumes:
   postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
