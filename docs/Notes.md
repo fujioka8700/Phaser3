@@ -1,8 +1,11 @@
-# 開発前の準備。
+# 開発前の準備
 
 ```bash
 # Next.jsアプリ作成
 $ docker compose run --rm app sh -c 'npx create-next-app . --typescript'
+
+# package-lock.jsonからインストール
+$ docker compose run --rm app sh -c 'npm ci'
 
 # コンテナ起動
 $ docker compose up
@@ -32,25 +35,7 @@ $ npx prisma generate
 $ npx prisma studio
 ```
 
-prisma/schema.prisma の定義
-
-```text
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-generator client {
-  provider = "prisma-client-js"
-}
-
-model Todo {
-  id    Int     @id @default(autoincrement())
-  title String
-}
-```
-
-# その他のコマンド
+# Git
 
 ```bash
 # タグの作成
@@ -70,4 +55,24 @@ $ git checkout -b <新しいブランチ名> <タグ名>
 
 # ローカルブランチを安全に削除する
 $ git branch -d <branch-name>
+```
+
+# その他
+
+prisma/schema.prisma の定義
+
+```text
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Todo {
+  id    Int     @id @default(autoincrement())
+  title String
+}
 ```
