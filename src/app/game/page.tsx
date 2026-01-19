@@ -88,6 +88,17 @@ export default function GamePage() {
           right: false,
           up: false,
         };
+        private isMoving = false;
+        private wasJumpPressed = false; // 前フレームでジャンプボタンが押されていたか
+        // マリオ風の動きのパラメータ
+        private readonly maxSpeed = 160; // 最大速度
+        private readonly acceleration = 800; // 加速度
+        private readonly deceleration = 1000; // 減速率（摩擦）
+        private readonly airControl = 0.5; // 空中での制御性（0.0-1.0）
+        private map!: Phaser.Tilemaps.Tilemap;
+        private tileset!: Phaser.Tilemaps.Tileset;
+        private backgroundLayer!: Phaser.Tilemaps.TilemapLayer;
+        private platformLayer!: Phaser.Tilemaps.TilemapLayer;
 
         constructor() {
           super({ key: "MainScene" });
@@ -99,6 +110,10 @@ export default function GamePage() {
             frameWidth: 48,
             frameHeight: 48,
           });
+
+          // タイルマップの読み込み
+          this.load.tilemapTiledJSON("tilemap", "/assets/maps/tilemap.json");
+          this.load.image("tileset", "/assets/maps/tilesheet.png");
         }
 
         create(): void {
@@ -111,12 +126,45 @@ export default function GamePage() {
           // 本番環境ではデバッグ表示を無効化
           this.physics.world.drawDebug = false;
 
-          // 1. 簡易的な地面（物理ボディを持つ静的グループ）
-          const ground = this.add.rectangle(187, 322, 374, 20, 0x888888);
-          this.physics.add.existing(ground, true);
+          // 1. タイルマップの作成
+          this.map = this.make.tilemap({ key: "tilemap" });
+          const tileset = this.map.addTilesetImage("tilesheet", "tileset");
+          if (!tileset) {
+            console.error("Failed to load tileset");
+            return;
+          }
+          this.tileset = tileset;
 
-          // 2. プレイヤーの生成（スプライトシートのフレーム0を使用）
-          this.player = this.physics.add.sprite(48, 48, "player", 0);
+          // 2. レイヤーの作成
+          const backgroundLayer = this.map.createLayer("background", this.tileset, 0, 0);
+          const platformLayer = this.map.createLayer("platform", this.tileset, 0, 0);
+          if (!backgroundLayer || !platformLayer) {
+            console.error("Failed to create tilemap layers");
+            return;
+          }
+          this.backgroundLayer = backgroundLayer;
+          this.platformLayer = platformLayer;
+
+          // 3. 衝突判定の設定（collidesプロパティを持つタイル）
+          this.platformLayer.setCollisionByProperty({ collides: true });
+
+          // 4. プレイヤーの開始位置をobjectLayerから取得
+          const objectLayer = this.map.getObjectLayer("objectsLayer");
+          let playerStartX = 48;
+          let playerStartY = 48;
+          if (objectLayer) {
+            const playerObj = objectLayer.objects.find((obj) => obj.name === "player");
+            if (playerObj && playerObj.x !== undefined && playerObj.y !== undefined) {
+              playerStartX = playerObj.x;
+              playerStartY = playerObj.y;
+              console.log(`Player start position from tilemap: x=${playerStartX}, y=${playerStartY}`);
+            }
+          } else {
+            console.warn("objectsLayer not found in tilemap");
+          }
+
+          // 5. プレイヤーの生成（スプライトシートのフレーム0を使用）
+          this.player = this.physics.add.sprite(playerStartX, playerStartY, "player", 0);
           // 表示サイズはデフォルト（48×48px）のまま
 
           // 物理ボディのサイズとオフセットを調整（透過部分を除外）
@@ -135,13 +183,8 @@ export default function GamePage() {
           playerBody.setOffset(offsetX, offsetY);
           playerBody.setCollideWorldBounds(true);
 
-          // 地面との衝突判定を設定（めり込みを防ぐため）
-          this.physics.add.collider(this.player, ground);
-
-          // キャラクターの初期位置を地面の上に調整
-          // 地面のY座標は322、高さ20pxなので、地面の上端は312
-          // キャラクターの高さ16pxを考慮して、地面の上端から少し上に配置
-          this.player.setY(312 - actualHeight / 2);
+          // 6. プレイヤーとタイルレイヤーの衝突判定を設定
+          this.physics.add.collider(this.player, this.platformLayer);
 
           // 3. アニメーションの作成
           // 待機アニメーション（最初のフレームのみ）
@@ -219,28 +262,105 @@ export default function GamePage() {
         }
 
         update(): void {
-          const speed = 160;
-          const onFloor = this.player.body?.touching.down;
-
-          // 左右移動と反転処理
-          if (this.cursors.left.isDown || this.controls.left) {
-            this.player.setVelocityX(-speed);
-            this.player.setFlipX(true);
-            if (onFloor) this.player.play("walk", true);
-          } else if (this.cursors.right.isDown || this.controls.right) {
-            this.player.setVelocityX(speed);
-            this.player.setFlipX(false);
-            if (onFloor) this.player.play("walk", true);
-          } else {
-            this.player.setVelocityX(0);
-            if (onFloor) this.player.play("idle", true);
+          if (!this.player || !this.player.body) {
+            return;
           }
 
-          // ジャンプ処理
-          if ((this.cursors.up.isDown || this.controls.up) && onFloor) {
-            this.player.setVelocityY(-350);
+          const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
+          const onFloor = playerBody.touching.down || playerBody.blocked.down;
+          const deltaTime = this.game.loop.delta / 1000; // 秒単位のデルタタイム
+
+          // ジャンプ開始（地面にいる時のみ）
+          const jumpInput = this.cursors.up.isDown || this.controls.up;
+          const jumpJustPressed = (jumpInput && !this.wasJumpPressed) && onFloor;
+
+          if (jumpJustPressed) {
+            // ジャンプボタンが押された瞬間、最大ジャンプの初速を設定
+            playerBody.setVelocityY(-350); // 最大ジャンプの初速（元のジャンプの高さ）
             this.player.play("jump", true);
             this.controls.up = false; // ボタンでの連続ジャンプを防止
+          }
+
+          // 上昇中にボタンが離されたら、上向きの速度を急ブレーキさせる
+          if (!jumpInput && this.wasJumpPressed && playerBody.velocity.y < 0 && !onFloor) {
+            // 現在の速度を20%にする（または 0 に近づける）
+            playerBody.setVelocityY(playerBody.velocity.y * 0.2);
+          }
+
+          // 前フレームの状態を更新
+          this.wasJumpPressed = jumpInput;
+
+          // マリオ風の左右移動（加速度ベース）
+          const leftInput = this.cursors.left.isDown || this.controls.left;
+          const rightInput = this.cursors.right.isDown || this.controls.right;
+          const currentVelocityX = playerBody.velocity.x;
+
+          if (leftInput) {
+            // 左入力
+            const controlFactor = onFloor ? 1.0 : this.airControl;
+            const targetVelocity = -this.maxSpeed * controlFactor;
+            
+            if (currentVelocityX > targetVelocity) {
+              // 減速または加速
+              const accel = onFloor ? this.acceleration : this.acceleration * this.airControl;
+              const newVelocity = Math.max(
+                currentVelocityX - accel * deltaTime,
+                targetVelocity
+              );
+              playerBody.setVelocityX(newVelocity);
+            }
+            this.player.setFlipX(true);
+            this.isMoving = true;
+            if (onFloor) {
+              this.player.play("walk", true);
+            } else {
+              this.player.play("jump", true);
+            }
+          } else if (rightInput) {
+            // 右入力
+            const controlFactor = onFloor ? 1.0 : this.airControl;
+            const targetVelocity = this.maxSpeed * controlFactor;
+            
+            if (currentVelocityX < targetVelocity) {
+              // 減速または加速
+              const accel = onFloor ? this.acceleration : this.acceleration * this.airControl;
+              const newVelocity = Math.min(
+                currentVelocityX + accel * deltaTime,
+                targetVelocity
+              );
+              playerBody.setVelocityX(newVelocity);
+            }
+            this.player.setFlipX(false);
+            this.isMoving = true;
+            if (onFloor) {
+              this.player.play("walk", true);
+            } else {
+              this.player.play("jump", true);
+            }
+          } else {
+            // 入力がない場合
+            if (onFloor) {
+              // 地面にいる時は減速（摩擦）
+              if (Math.abs(currentVelocityX) > 10) {
+                // 速度が大きい場合は減速
+                const decel = this.deceleration * deltaTime;
+                if (currentVelocityX > 0) {
+                  playerBody.setVelocityX(Math.max(0, currentVelocityX - decel));
+                } else {
+                  playerBody.setVelocityX(Math.min(0, currentVelocityX + decel));
+                }
+                this.isMoving = true;
+                this.player.play("walk", true);
+              } else {
+                // 速度が小さい場合は停止
+                playerBody.setVelocityX(0);
+                this.isMoving = false;
+                this.player.play("idle", true);
+              }
+            } else {
+              // ジャンプ中（空中）は、現在のX方向の速度を維持（慣性を維持）
+              this.player.play("jump", true);
+            }
           }
         }
       }
@@ -257,7 +377,16 @@ export default function GamePage() {
           up: false,
         };
         private isMoving = false;
-        private isJumping = false;
+        private wasJumpPressed = false; // 前フレームでジャンプボタンが押されていたか
+        private map!: Phaser.Tilemaps.Tilemap;
+        // マリオ風の動きのパラメータ
+        private readonly maxSpeed = 160; // 最大速度
+        private readonly acceleration = 800; // 加速度
+        private readonly deceleration = 1000; // 減速率（摩擦）
+        private readonly airControl = 0.5; // 空中での制御性（0.0-1.0）
+        private tileset!: Phaser.Tilemaps.Tileset;
+        private backgroundLayer!: Phaser.Tilemaps.TilemapLayer;
+        private platformLayer!: Phaser.Tilemaps.TilemapLayer;
 
         constructor() {
           super({ key: "DevScene" });
@@ -269,6 +398,10 @@ export default function GamePage() {
             frameWidth: 48,
             frameHeight: 48,
           });
+
+          // タイルマップの読み込み
+          this.load.tilemapTiledJSON("tilemap", "/assets/maps/tilemap.json");
+          this.load.image("tileset", "/assets/maps/tilesheet.png");
         }
 
         create() {
@@ -278,12 +411,45 @@ export default function GamePage() {
           });
           devText.setPadding(0, 3, 0, 0);
 
-          // 1. 簡易的な地面（物理ボディを持つ静的グループ）
-          const ground = this.add.rectangle(187, 322, 374, 20, 0x888888);
-          this.physics.add.existing(ground, true);
+          // 1. タイルマップの作成
+          this.map = this.make.tilemap({ key: "tilemap" });
+          const tileset = this.map.addTilesetImage("tilesheet", "tileset");
+          if (!tileset) {
+            console.error("Failed to load tileset");
+            return;
+          }
+          this.tileset = tileset;
 
-          // 2. プレイヤーの生成（スプライトシートのフレーム0を使用）
-          this.player = this.physics.add.sprite(48, 48, "player", 0);
+          // 2. レイヤーの作成
+          const backgroundLayer = this.map.createLayer("background", this.tileset, 0, 0);
+          const platformLayer = this.map.createLayer("platform", this.tileset, 0, 0);
+          if (!backgroundLayer || !platformLayer) {
+            console.error("Failed to create tilemap layers");
+            return;
+          }
+          this.backgroundLayer = backgroundLayer;
+          this.platformLayer = platformLayer;
+
+          // 3. 衝突判定の設定（collidesプロパティを持つタイル）
+          this.platformLayer.setCollisionByProperty({ collides: true });
+
+          // 4. プレイヤーの開始位置をobjectLayerから取得
+          const objectLayer = this.map.getObjectLayer("objectsLayer");
+          let playerStartX = 48;
+          let playerStartY = 48;
+          if (objectLayer) {
+            const playerObj = objectLayer.objects.find((obj) => obj.name === "player");
+            if (playerObj && playerObj.x !== undefined && playerObj.y !== undefined) {
+              playerStartX = playerObj.x;
+              playerStartY = playerObj.y;
+              console.log(`Player start position from tilemap: x=${playerStartX}, y=${playerStartY}`);
+            }
+          } else {
+            console.warn("objectsLayer not found in tilemap");
+          }
+
+          // 5. プレイヤーの生成（スプライトシートのフレーム0を使用）
+          this.player = this.physics.add.sprite(playerStartX, playerStartY, "player", 0);
           // 表示サイズはデフォルト（48×48px）のまま
 
           // 物理ボディのサイズとオフセットを調整（透過部分を除外）
@@ -302,13 +468,8 @@ export default function GamePage() {
           this.playerBody.setOffset(offsetX, offsetY);
           this.playerBody.setCollideWorldBounds(true);
 
-          // 地面との衝突判定を設定（めり込みを防ぐため）
-          this.physics.add.collider(this.player, ground);
-
-          // キャラクターの初期位置を地面の上に調整
-          // 地面のY座標は322、高さ20pxなので、地面の上端は312
-          // キャラクターの高さ16pxを考慮して、地面の上端から少し上に配置
-          this.player.setY(312 - actualHeight / 2);
+          // 6. プレイヤーとタイルレイヤーの衝突判定を設定
+          this.physics.add.collider(this.player, this.platformLayer);
 
           // 3. アニメーションの作成
           // 待機アニメーション（最初のフレームのみ）
@@ -386,37 +547,105 @@ export default function GamePage() {
         }
 
         update(): void {
-          const speed = 160;
-          const onFloor = this.playerBody?.touching.down;
-
-          // 左右移動とアニメーション
-          if (this.cursors.left.isDown || this.controls.left) {
-            this.playerBody.setVelocityX(-speed);
-            this.player.setFlipX(true);
-            this.isMoving = true;
-            if (onFloor) this.player.play("walk", true);
-          } else if (this.cursors.right.isDown || this.controls.right) {
-            this.playerBody.setVelocityX(speed);
-            this.player.setFlipX(false);
-            this.isMoving = true;
-            if (onFloor) this.player.play("walk", true);
-          } else {
-            this.playerBody.setVelocityX(0);
-            this.isMoving = false;
-            if (onFloor) this.player.play("idle", true);
+          if (!this.player || !this.player.body) {
+            return;
           }
 
-          // ジャンプ処理
-          if ((this.cursors.up.isDown || this.controls.up) && onFloor) {
-            this.playerBody.setVelocityY(-350);
+          const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
+          const onFloor = playerBody.touching.down || playerBody.blocked.down;
+          const deltaTime = this.game.loop.delta / 1000; // 秒単位のデルタタイム
+
+          // ジャンプ開始（地面にいる時のみ）
+          const jumpInput = this.cursors.up.isDown || this.controls.up;
+          const jumpJustPressed = (jumpInput && !this.wasJumpPressed) && onFloor;
+
+          if (jumpJustPressed) {
+            // ジャンプボタンが押された瞬間、最大ジャンプの初速を設定
+            playerBody.setVelocityY(-350); // 最大ジャンプの初速（元のジャンプの高さ）
             this.player.play("jump", true);
-            this.isJumping = true;
             this.controls.up = false; // ボタンでの連続ジャンプを防止
           }
 
-          // 着地時の処理
-          if (onFloor && this.isJumping) {
-            this.isJumping = false;
+          // 上昇中にボタンが離されたら、上向きの速度を急ブレーキさせる
+          if (!jumpInput && this.wasJumpPressed && playerBody.velocity.y < 0 && !onFloor) {
+            // 現在の速度を20%にする（または 0 に近づける）
+            playerBody.setVelocityY(playerBody.velocity.y * 0.2);
+          }
+
+          // 前フレームの状態を更新
+          this.wasJumpPressed = jumpInput;
+
+          // マリオ風の左右移動（加速度ベース）
+          const leftInput = this.cursors.left.isDown || this.controls.left;
+          const rightInput = this.cursors.right.isDown || this.controls.right;
+          const currentVelocityX = playerBody.velocity.x;
+
+          if (leftInput) {
+            // 左入力
+            const controlFactor = onFloor ? 1.0 : this.airControl;
+            const targetVelocity = -this.maxSpeed * controlFactor;
+            
+            if (currentVelocityX > targetVelocity) {
+              // 減速または加速
+              const accel = onFloor ? this.acceleration : this.acceleration * this.airControl;
+              const newVelocity = Math.max(
+                currentVelocityX - accel * deltaTime,
+                targetVelocity
+              );
+              playerBody.setVelocityX(newVelocity);
+            }
+            this.player.setFlipX(true);
+            this.isMoving = true;
+            if (onFloor) {
+              this.player.play("walk", true);
+            } else {
+              this.player.play("jump", true);
+            }
+          } else if (rightInput) {
+            // 右入力
+            const controlFactor = onFloor ? 1.0 : this.airControl;
+            const targetVelocity = this.maxSpeed * controlFactor;
+            
+            if (currentVelocityX < targetVelocity) {
+              // 減速または加速
+              const accel = onFloor ? this.acceleration : this.acceleration * this.airControl;
+              const newVelocity = Math.min(
+                currentVelocityX + accel * deltaTime,
+                targetVelocity
+              );
+              playerBody.setVelocityX(newVelocity);
+            }
+            this.player.setFlipX(false);
+            this.isMoving = true;
+            if (onFloor) {
+              this.player.play("walk", true);
+            } else {
+              this.player.play("jump", true);
+            }
+          } else {
+            // 入力がない場合
+            if (onFloor) {
+              // 地面にいる時は減速（摩擦）
+              if (Math.abs(currentVelocityX) > 10) {
+                // 速度が大きい場合は減速
+                const decel = this.deceleration * deltaTime;
+                if (currentVelocityX > 0) {
+                  playerBody.setVelocityX(Math.max(0, currentVelocityX - decel));
+                } else {
+                  playerBody.setVelocityX(Math.min(0, currentVelocityX + decel));
+                }
+                this.isMoving = true;
+                this.player.play("walk", true);
+              } else {
+                // 速度が小さい場合は停止
+                playerBody.setVelocityX(0);
+                this.isMoving = false;
+                this.player.play("idle", true);
+              }
+            } else {
+              // ジャンプ中（空中）は、現在のX方向の速度を維持（慣性を維持）
+              this.player.play("jump", true);
+            }
           }
         }
       }
@@ -479,8 +708,8 @@ export default function GamePage() {
         : [TitleScene, MainScene, ClearScene];
       const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
-        width: 375,
-        height: 333,
+        width: 256,
+        height: 240,
         parent: gameRef.current,
         backgroundColor: "#2c3e50",
         scene: scenes,
