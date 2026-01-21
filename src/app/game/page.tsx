@@ -148,6 +148,18 @@ export default function GamePage() {
           // 3. 衝突判定の設定（collidesプロパティを持つタイル）
           this.platformLayer.setCollisionByProperty({ collides: true });
 
+          // 3-1. oneWayプロパティを持つタイルの設定（下からの衝突を無視）
+          this.platformLayer.forEachTile((tile) => {
+            if (tile.properties && tile.properties.oneWay) {
+              // 下からの衝突を無視するように設定（左, 右, 上, 下）
+              tile.setCollision(false, false, true, false);
+              // 重要：タイル自体の衝突判定（faces）を更新
+              tile.collideDown = false;
+              tile.collideLeft = false;
+              tile.collideRight = false;
+            }
+          });
+
           // 4. プレイヤーの開始位置をobjectLayerから取得
           const objectLayer = this.map.getObjectLayer("objectsLayer");
           let playerStartX = 48;
@@ -183,15 +195,53 @@ export default function GamePage() {
           playerBody.setOffset(offsetX, offsetY);
           playerBody.setCollideWorldBounds(true);
 
-          // 6. プレイヤーとタイルレイヤーの衝突判定を設定
-          this.physics.add.collider(this.player, this.platformLayer);
+          // 6. プレイヤーとタイルレイヤーの衝突判定を設定（oneWayタイルの特別処理）
+          this.physics.add.collider(
+            this.player,
+            this.platformLayer,
+            undefined, // 衝突コールバック（使用しない）
+            (playerObj, tileObj) => {
+              // processCallback: 衝突を処理する前に呼ばれるコールバック
+              const player = playerObj as Phaser.Physics.Arcade.Sprite;
+              const tile = tileObj as Phaser.Tilemaps.Tile;
+              const playerBody = player.body as Phaser.Physics.Arcade.Body;
+
+              if (tile.properties && tile.properties.oneWay !== true) {
+                return true;
+              }
+
+              // 1. 上昇中は絶対にすり抜ける
+              if (playerBody.velocity.y < 0) {
+                return false;
+              }
+
+              // 2. 落下中の貫通防止ロジック
+              // プレイヤーの足元の位置（今）
+              const playerBottom = playerBody.bottom;
+              // プレイヤーの足元の位置（1フレーム前）
+              const prevPlayerBottom = playerBody.prev.y + playerBody.height;
+              // タイルの上面
+              const tileTop = tile.pixelY;
+
+              // 「1フレーム前にタイルの上にいた」または「今タイルの上端より少し上にいる」なら着地
+              // 許容範囲（tolerance）を少し広めに取る（例: 8px）のがコツです
+              if (prevPlayerBottom <= tileTop + 2 || playerBottom <= tileTop + 8) {
+                return true;
+              }
+
+              return false;
+            }
+          );
 
           // 3. アニメーションの作成
-          // 待機アニメーション（最初のフレームのみ）
+          // 待機アニメーション（1枚目から4枚目: フレーム0-3）
           this.anims.create({
             key: "idle",
-            frames: [{ key: "player", frame: 0 }],
-            frameRate: 1,
+            frames: this.anims.generateFrameNumbers("player", {
+              start: 0,
+              end: 3,
+            }),
+            frameRate: 8,
             repeat: -1,
           });
 
@@ -206,10 +256,17 @@ export default function GamePage() {
             repeat: -1,
           });
 
-          // 4行目: ジャンプ (12番付近)
+          // ジャンプアニメーション（上昇中: 9枚目）
           this.anims.create({
             key: "jump",
-            frames: [{ key: "player", frame: 12 }],
+            frames: [{ key: "player", frame: 8 }],
+            frameRate: 1,
+          });
+
+          // 落下アニメーション（落下中: 10枚目）
+          this.anims.create({
+            key: "fall",
+            frames: [{ key: "player", frame: 9 }],
             frameRate: 1,
           });
 
@@ -314,7 +371,12 @@ export default function GamePage() {
             if (onFloor) {
               this.player.play("walk", true);
             } else {
-              this.player.play("jump", true);
+              // 空中にいる場合、velocity.yに基づいてアニメーションを選択
+              if (playerBody.velocity.y < 0) {
+                this.player.play("jump", true); // ジャンプ中（上昇中）
+              } else {
+                this.player.play("fall", true); // 落下中
+              }
             }
           } else if (rightInput) {
             // 右入力
@@ -335,7 +397,12 @@ export default function GamePage() {
             if (onFloor) {
               this.player.play("walk", true);
             } else {
-              this.player.play("jump", true);
+              // 空中にいる場合、velocity.yに基づいてアニメーションを選択
+              if (playerBody.velocity.y < 0) {
+                this.player.play("jump", true); // ジャンプ中（上昇中）
+              } else {
+                this.player.play("fall", true); // 落下中
+              }
             }
           } else {
             // 入力がない場合
@@ -359,7 +426,12 @@ export default function GamePage() {
               }
             } else {
               // ジャンプ中（空中）は、現在のX方向の速度を維持（慣性を維持）
-              this.player.play("jump", true);
+              // velocity.yに基づいてアニメーションを選択
+              if (playerBody.velocity.y < 0) {
+                this.player.play("jump", true); // ジャンプ中（上昇中）
+              } else {
+                this.player.play("fall", true); // 落下中
+              }
             }
           }
         }
@@ -433,6 +505,18 @@ export default function GamePage() {
           // 3. 衝突判定の設定（collidesプロパティを持つタイル）
           this.platformLayer.setCollisionByProperty({ collides: true });
 
+          // 3-1. oneWayプロパティを持つタイルの設定（下からの衝突を無視）
+          this.platformLayer.forEachTile((tile) => {
+            if (tile.properties && tile.properties.oneWay) {
+              // 下からの衝突を無視するように設定（左, 右, 上, 下）
+              tile.setCollision(false, false, true, false);
+              // 重要：タイル自体の衝突判定（faces）を更新
+              tile.collideDown = false;
+              tile.collideLeft = false;
+              tile.collideRight = false;
+            }
+          });
+
           // 4. プレイヤーの開始位置をobjectLayerから取得
           const objectLayer = this.map.getObjectLayer("objectsLayer");
           let playerStartX = 48;
@@ -468,15 +552,53 @@ export default function GamePage() {
           this.playerBody.setOffset(offsetX, offsetY);
           this.playerBody.setCollideWorldBounds(true);
 
-          // 6. プレイヤーとタイルレイヤーの衝突判定を設定
-          this.physics.add.collider(this.player, this.platformLayer);
+          // 6. プレイヤーとタイルレイヤーの衝突判定を設定（oneWayタイルの特別処理）
+          this.physics.add.collider(
+            this.player,
+            this.platformLayer,
+            undefined, // 衝突コールバック（使用しない）
+            (playerObj, tileObj) => {
+              // processCallback: 衝突を処理する前に呼ばれるコールバック
+              const player = playerObj as Phaser.Physics.Arcade.Sprite;
+              const tile = tileObj as Phaser.Tilemaps.Tile;
+              const playerBody = player.body as Phaser.Physics.Arcade.Body;
+
+              if (tile.properties && tile.properties.oneWay !== true) {
+                return true;
+              }
+
+              // 1. 上昇中は絶対にすり抜ける
+              if (playerBody.velocity.y < 0) {
+                return false;
+              }
+
+              // 2. 落下中の貫通防止ロジック
+              // プレイヤーの足元の位置（今）
+              const playerBottom = playerBody.bottom;
+              // プレイヤーの足元の位置（1フレーム前）
+              const prevPlayerBottom = playerBody.prev.y + playerBody.height;
+              // タイルの上面
+              const tileTop = tile.pixelY;
+
+              // 「1フレーム前にタイルの上にいた」または「今タイルの上端より少し上にいる」なら着地
+              // 許容範囲（tolerance）を少し広めに取る（例: 8px）のがコツです
+              if (prevPlayerBottom <= tileTop + 2 || playerBottom <= tileTop + 8) {
+                return true;
+              }
+
+              return false;
+            }
+          );
 
           // 3. アニメーションの作成
-          // 待機アニメーション（最初のフレームのみ）
+          // 待機アニメーション（1枚目から4枚目: フレーム0-3）
           this.anims.create({
             key: "idle",
-            frames: [{ key: "player", frame: 0 }],
-            frameRate: 1,
+            frames: this.anims.generateFrameNumbers("player", {
+              start: 0,
+              end: 3,
+            }),
+            frameRate: 8,
             repeat: -1,
           });
 
@@ -491,10 +613,17 @@ export default function GamePage() {
             repeat: -1,
           });
 
-          // ジャンプアニメーション (12番)
+          // ジャンプアニメーション（上昇中: 9枚目）
           this.anims.create({
             key: "jump",
-            frames: [{ key: "player", frame: 12 }],
+            frames: [{ key: "player", frame: 8 }],
+            frameRate: 1,
+          });
+
+          // 落下アニメーション（落下中: 10枚目）
+          this.anims.create({
+            key: "fall",
+            frames: [{ key: "player", frame: 9 }],
             frameRate: 1,
           });
 
@@ -599,7 +728,12 @@ export default function GamePage() {
             if (onFloor) {
               this.player.play("walk", true);
             } else {
-              this.player.play("jump", true);
+              // 空中にいる場合、velocity.yに基づいてアニメーションを選択
+              if (playerBody.velocity.y < 0) {
+                this.player.play("jump", true); // ジャンプ中（上昇中）
+              } else {
+                this.player.play("fall", true); // 落下中
+              }
             }
           } else if (rightInput) {
             // 右入力
@@ -620,7 +754,12 @@ export default function GamePage() {
             if (onFloor) {
               this.player.play("walk", true);
             } else {
-              this.player.play("jump", true);
+              // 空中にいる場合、velocity.yに基づいてアニメーションを選択
+              if (playerBody.velocity.y < 0) {
+                this.player.play("jump", true); // ジャンプ中（上昇中）
+              } else {
+                this.player.play("fall", true); // 落下中
+              }
             }
           } else {
             // 入力がない場合
@@ -644,7 +783,12 @@ export default function GamePage() {
               }
             } else {
               // ジャンプ中（空中）は、現在のX方向の速度を維持（慣性を維持）
-              this.player.play("jump", true);
+              // velocity.yに基づいてアニメーションを選択
+              if (playerBody.velocity.y < 0) {
+                this.player.play("jump", true); // ジャンプ中（上昇中）
+              } else {
+                this.player.play("fall", true); // 落下中
+              }
             }
           }
         }
