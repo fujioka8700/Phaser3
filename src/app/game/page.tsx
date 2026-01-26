@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const isDebug = true; // 開発時は true にする
 
@@ -14,6 +14,12 @@ const globalControls = {
 export default function GamePage() {
   const gameRef = useRef<HTMLDivElement>(null);
   const phaserGameRef = useRef<any>(null);
+  // ボタンの視覚的フィードバック用のstate（Phaserゲームの再初期化には影響しない）
+  const [buttonStates, setButtonStates] = useState({
+    left: false,
+    right: false,
+    up: false,
+  });
 
   useEffect(() => {
     if (!gameRef.current) {
@@ -833,30 +839,36 @@ export default function GamePage() {
   }, []); // 初回のみ実行（Phaserゲームの再初期化を防ぐ）
 
   // コントロールボタンのハンドラー
-  // setControlsを呼び出さないことで、Reactの再レンダリングを防ぎ、Phaserゲームの再初期化を回避
+  // 視覚的フィードバック用のstateのみ更新（Phaserゲームの再初期化には影響しない）
   const handleLeftDown = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     globalControls.left = true;
+    setButtonStates((prev) => ({ ...prev, left: true }));
   };
   const handleLeftUp = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     globalControls.left = false;
+    setButtonStates((prev) => ({ ...prev, left: false }));
   };
   const handleRightDown = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     globalControls.right = true;
+    setButtonStates((prev) => ({ ...prev, right: true }));
   };
   const handleRightUp = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     globalControls.right = false;
+    setButtonStates((prev) => ({ ...prev, right: false }));
   };
   const handleADown = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     globalControls.up = true;
+    setButtonStates((prev) => ({ ...prev, up: true }));
   };
   const handleAUp = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     globalControls.up = false;
+    setButtonStates((prev) => ({ ...prev, up: false }));
   };
 
   return (
@@ -871,7 +883,11 @@ export default function GamePage() {
           onMouseLeave={handleLeftUp}
           onTouchStart={handleLeftDown}
           onTouchEnd={handleLeftUp}
-          className="w-16 h-16 rounded-full border-2 border-black bg-white flex items-center justify-center active:bg-gray-200 select-none touch-none"
+          className={`w-16 h-16 rounded-full border-2 border-black flex items-center justify-center shadow-md transition-all duration-75 select-none touch-none ${
+            buttonStates.left
+              ? "bg-gray-200 scale-95 shadow-inner"
+              : "bg-white scale-100"
+          }`}
         >
           <svg
             width="32"
@@ -890,7 +906,11 @@ export default function GamePage() {
           onMouseLeave={handleRightUp}
           onTouchStart={handleRightDown}
           onTouchEnd={handleRightUp}
-          className="w-16 h-16 rounded-full border-2 border-black bg-white flex items-center justify-center active:bg-gray-200 select-none touch-none"
+          className={`w-16 h-16 rounded-full border-2 border-black flex items-center justify-center shadow-md transition-all duration-75 select-none touch-none ${
+            buttonStates.right
+              ? "bg-gray-200 scale-95 shadow-inner"
+              : "bg-white scale-100"
+          }`}
         >
           <svg
             width="32"
@@ -909,7 +929,11 @@ export default function GamePage() {
           onMouseLeave={handleAUp}
           onTouchStart={handleADown}
           onTouchEnd={handleAUp}
-          className="w-16 h-16 rounded-full border-2 border-black bg-white flex items-center justify-center active:bg-gray-200 select-none touch-none ml-8"
+          className={`w-16 h-16 rounded-full border-2 border-black flex items-center justify-center shadow-md transition-all duration-75 select-none touch-none ml-8 ${
+            buttonStates.up
+              ? "bg-gray-200 scale-95 shadow-inner"
+              : "bg-white scale-100"
+          }`}
         >
           <span className="text-black font-bold text-xl">A</span>
         </button>
