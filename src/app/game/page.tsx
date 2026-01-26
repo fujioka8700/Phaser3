@@ -4,6 +4,13 @@ import { useEffect, useRef } from "react";
 
 const isDebug = true; // 開発時は true にする
 
+// グローバルなコントロール状態（PhaserシーンとReactコンポーネント間で共有）
+const globalControls = {
+  left: false,
+  right: false,
+  up: false,
+};
+
 export default function GamePage() {
   const gameRef = useRef<HTMLDivElement>(null);
   const phaserGameRef = useRef<any>(null);
@@ -83,11 +90,7 @@ export default function GamePage() {
         // プロパティの型定義
         private player!: Phaser.Physics.Arcade.Sprite;
         private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-        private controls = {
-          left: false,
-          right: false,
-          up: false,
-        };
+        private controls = globalControls;
         private isMoving = false;
         private wasJumpPressed = false; // 前フレームでジャンプボタンが押されていたか
         // マリオ風の動きのパラメータ
@@ -275,8 +278,7 @@ export default function GamePage() {
             this.cursors = this.input.keyboard.createCursorKeys();
           }
 
-          // 5. バーチャルコントローラーの配置
-          this.createMobileControls();
+          // 5. バーチャルコントローラーはReactコンポーネントで実装（Phaser内では作成しない）
 
           // スペースキーでDevSceneへ切り替え
           if (this.input.keyboard) {
@@ -286,37 +288,6 @@ export default function GamePage() {
           }
         }
 
-        private createMobileControls(): void {
-          const centerY = 500;
-          const btnStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-            fontSize: "24px",
-            backgroundColor: "#333",
-            padding: { x: 20, y: 20 },
-            fixedWidth: 100,
-            align: "center",
-          };
-
-          // 各ボタンの生成とインタラクション設定
-          this.add
-            .text(10, centerY, "LEFT", btnStyle)
-            .setInteractive()
-            .on("pointerdown", () => (this.controls.left = true))
-            .on("pointerup", () => (this.controls.left = false))
-            .on("pointerout", () => (this.controls.left = false));
-
-          this.add
-            .text(120, centerY, "RIGHT", btnStyle)
-            .setInteractive()
-            .on("pointerdown", () => (this.controls.right = true))
-            .on("pointerup", () => (this.controls.right = false))
-            .on("pointerout", () => (this.controls.right = false));
-
-          this.add
-            .text(250, centerY, "JUMP", btnStyle)
-            .setInteractive()
-            .on("pointerdown", () => (this.controls.up = true))
-            .on("pointerup", () => (this.controls.up = false));
-        }
 
         update(): void {
           if (!this.player || !this.player.body) {
@@ -328,14 +299,14 @@ export default function GamePage() {
           const deltaTime = this.game.loop.delta / 1000; // 秒単位のデルタタイム
 
           // ジャンプ開始（地面にいる時のみ）
-          const jumpInput = this.cursors.up.isDown || this.controls.up;
+          const jumpInput = this.cursors.up.isDown || globalControls.up;
           const jumpJustPressed = (jumpInput && !this.wasJumpPressed) && onFloor;
 
           if (jumpJustPressed) {
             // ジャンプボタンが押された瞬間、最大ジャンプの初速を設定
             playerBody.setVelocityY(-350); // 最大ジャンプの初速（元のジャンプの高さ）
             this.player.play("jump", true);
-            this.controls.up = false; // ボタンでの連続ジャンプを防止
+            // globalControls.upは、ボタンが離されるまでtrueのまま維持（キーボード入力と同じ動作）
           }
 
           // 上昇中にボタンが離されたら、上向きの速度を急ブレーキさせる
@@ -348,8 +319,8 @@ export default function GamePage() {
           this.wasJumpPressed = jumpInput;
 
           // マリオ風の左右移動（加速度ベース）
-          const leftInput = this.cursors.left.isDown || this.controls.left;
-          const rightInput = this.cursors.right.isDown || this.controls.right;
+          const leftInput = this.cursors.left.isDown || globalControls.left;
+          const rightInput = this.cursors.right.isDown || globalControls.right;
           const currentVelocityX = playerBody.velocity.x;
 
           if (leftInput) {
@@ -443,11 +414,7 @@ export default function GamePage() {
         private player!: Phaser.Physics.Arcade.Sprite;
         private playerBody!: Phaser.Physics.Arcade.Body;
         private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-        private controls = {
-          left: false,
-          right: false,
-          up: false,
-        };
+        private controls = globalControls;
         private isMoving = false;
         private wasJumpPressed = false; // 前フレームでジャンプボタンが押されていたか
         private map!: Phaser.Tilemaps.Tilemap;
@@ -632,8 +599,7 @@ export default function GamePage() {
             this.cursors = this.input.keyboard.createCursorKeys();
           }
 
-          // 4. バーチャルコントローラーの配置
-          this.createMobileControls();
+          // 4. バーチャルコントローラーはReactコンポーネントで実装（Phaser内では作成しない）
 
           // スペースキーでMainSceneへ切り替え
           if (this.input.keyboard) {
@@ -643,37 +609,6 @@ export default function GamePage() {
           }
         }
 
-        private createMobileControls(): void {
-          const centerY = 500;
-          const btnStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-            fontSize: "24px",
-            backgroundColor: "#333",
-            padding: { x: 20, y: 20 },
-            fixedWidth: 100,
-            align: "center",
-          };
-
-          // 各ボタンの生成とインタラクション設定
-          this.add
-            .text(10, centerY, "LEFT", btnStyle)
-            .setInteractive()
-            .on("pointerdown", () => (this.controls.left = true))
-            .on("pointerup", () => (this.controls.left = false))
-            .on("pointerout", () => (this.controls.left = false));
-
-          this.add
-            .text(120, centerY, "RIGHT", btnStyle)
-            .setInteractive()
-            .on("pointerdown", () => (this.controls.right = true))
-            .on("pointerup", () => (this.controls.right = false))
-            .on("pointerout", () => (this.controls.right = false));
-
-          this.add
-            .text(250, centerY, "JUMP", btnStyle)
-            .setInteractive()
-            .on("pointerdown", () => (this.controls.up = true))
-            .on("pointerup", () => (this.controls.up = false));
-        }
 
         update(): void {
           if (!this.player || !this.player.body) {
@@ -685,14 +620,14 @@ export default function GamePage() {
           const deltaTime = this.game.loop.delta / 1000; // 秒単位のデルタタイム
 
           // ジャンプ開始（地面にいる時のみ）
-          const jumpInput = this.cursors.up.isDown || this.controls.up;
+          const jumpInput = this.cursors.up.isDown || globalControls.up;
           const jumpJustPressed = (jumpInput && !this.wasJumpPressed) && onFloor;
 
           if (jumpJustPressed) {
             // ジャンプボタンが押された瞬間、最大ジャンプの初速を設定
             playerBody.setVelocityY(-350); // 最大ジャンプの初速（元のジャンプの高さ）
             this.player.play("jump", true);
-            this.controls.up = false; // ボタンでの連続ジャンプを防止
+            // globalControls.upは、ボタンが離されるまでtrueのまま維持（キーボード入力と同じ動作）
           }
 
           // 上昇中にボタンが離されたら、上向きの速度を急ブレーキさせる
@@ -705,8 +640,8 @@ export default function GamePage() {
           this.wasJumpPressed = jumpInput;
 
           // マリオ風の左右移動（加速度ベース）
-          const leftInput = this.cursors.left.isDown || this.controls.left;
-          const rightInput = this.cursors.right.isDown || this.controls.right;
+          const leftInput = this.cursors.left.isDown || globalControls.left;
+          const rightInput = this.cursors.right.isDown || globalControls.right;
           const currentVelocityX = playerBody.velocity.x;
 
           if (leftInput) {
@@ -895,12 +830,90 @@ export default function GamePage() {
         gameRef.current.innerHTML = "";
       }
     };
-  }); // 毎回更新
-  /*}, []); 初回のみ（1回だけ）*/
+  }, []); // 初回のみ実行（Phaserゲームの再初期化を防ぐ）
+
+  // コントロールボタンのハンドラー
+  // setControlsを呼び出さないことで、Reactの再レンダリングを防ぎ、Phaserゲームの再初期化を回避
+  const handleLeftDown = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    globalControls.left = true;
+  };
+  const handleLeftUp = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    globalControls.left = false;
+  };
+  const handleRightDown = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    globalControls.right = true;
+  };
+  const handleRightUp = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    globalControls.right = false;
+  };
+  const handleADown = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    globalControls.up = true;
+  };
+  const handleAUp = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    globalControls.up = false;
+  };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-900">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900">
       <div ref={gameRef} />
+      {/* バーチャルコントローラー */}
+      <div className="flex items-center justify-center gap-4 mt-4 pb-4">
+        {/* 左ボタン */}
+        <button
+          onMouseDown={handleLeftDown}
+          onMouseUp={handleLeftUp}
+          onMouseLeave={handleLeftUp}
+          onTouchStart={handleLeftDown}
+          onTouchEnd={handleLeftUp}
+          className="w-16 h-16 rounded-full border-2 border-black bg-white flex items-center justify-center active:bg-gray-200 select-none touch-none"
+        >
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="black"
+          >
+            <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+          </svg>
+        </button>
+
+        {/* 右ボタン */}
+        <button
+          onMouseDown={handleRightDown}
+          onMouseUp={handleRightUp}
+          onMouseLeave={handleRightUp}
+          onTouchStart={handleRightDown}
+          onTouchEnd={handleRightUp}
+          className="w-16 h-16 rounded-full border-2 border-black bg-white flex items-center justify-center active:bg-gray-200 select-none touch-none"
+        >
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="black"
+          >
+            <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
+          </svg>
+        </button>
+
+        {/* Aボタン */}
+        <button
+          onMouseDown={handleADown}
+          onMouseUp={handleAUp}
+          onMouseLeave={handleAUp}
+          onTouchStart={handleADown}
+          onTouchEnd={handleAUp}
+          className="w-16 h-16 rounded-full border-2 border-black bg-white flex items-center justify-center active:bg-gray-200 select-none touch-none ml-8"
+        >
+          <span className="text-black font-bold text-xl">A</span>
+        </button>
+      </div>
     </div>
   );
 }
