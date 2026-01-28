@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const isDebug = true; // 開発時は true にする
+const isDebug = false; // 開発時は true にする
 
 // グローバルなコントロール状態（PhaserシーンとReactコンポーネント間で共有）
 const globalControls = {
@@ -61,26 +61,26 @@ export default function GamePage() {
             .text(
               this.cameras.main.width / 2,
               this.cameras.main.height / 2 - 30,
-              "ワンクリックゲーム",
+              "Super Mango",
               {
                 fontSize: "24px",
                 color: "#ecf0f1",
                 fontFamily: "Arial",
-              }
+              },
             )
             .setOrigin(0.5);
 
-          // クリックして開始のテキスト
+          // please click!!のテキスト
           this.add
             .text(
               this.cameras.main.width / 2,
               this.cameras.main.height / 2 + 30,
-              "クリックして開始",
+              "please click!!",
               {
                 fontSize: "16px",
                 color: "#95a5a6",
                 fontFamily: "Arial",
-              }
+              },
             )
             .setOrigin(0.5);
 
@@ -91,372 +91,109 @@ export default function GamePage() {
         }
       }
 
-      // 本番ゲームシーン
+      // ゲーム定数
+      const GAME_CONSTANTS = {
+        // プレイヤー設定
+        PLAYER: {
+          FRAME_WIDTH: 48,
+          FRAME_HEIGHT: 48,
+          ACTUAL_WIDTH: 16,
+          ACTUAL_HEIGHT: 16,
+          DEFAULT_START_X: 48,
+          DEFAULT_START_Y: 48,
+        },
+        // 敵設定
+        ENEMY: {
+          DISPLAY_WIDTH: 64,
+          DISPLAY_HEIGHT: 48,
+          BODY_WIDTH: 24,
+          BODY_HEIGHT: 10,
+          OFFSET_X: 20,
+          OFFSET_Y: 22,
+          SPEED_X: 50,
+          SPEED_Y: 300,
+          INITIAL_DIRECTION: -1, // -1: 左, 1: 右
+          SENSOR_DISTANCE: 1, // 前方のセンサー距離（px）
+          FLIP_ADJUST: 4, // 反転時の位置調整（px）
+        },
+        // プレイヤー移動パラメータ
+        MOVEMENT: {
+          MAX_SPEED: 160,
+          ACCELERATION: 800,
+          DECELERATION: 1000,
+          AIR_CONTROL: 0.5,
+          JUMP_VELOCITY: -350,
+          JUMP_CANCEL_FACTOR: 0.2,
+          MIN_VELOCITY_THRESHOLD: 10,
+        },
+        // カメラ設定
+        CAMERA: {
+          FOLLOW_LERP_X: 0.1,
+          FOLLOW_LERP_Y: 0.1,
+        },
+        // 衝突判定の許容範囲
+        COLLISION: {
+          ONE_WAY_TOLERANCE_PREV: 2,
+          ONE_WAY_TOLERANCE_CURRENT: 8,
+        },
+      };
+
+      // 敵の拡張型定義
+      interface EnemySprite extends Phaser.Physics.Arcade.Sprite {
+        moveDirection: number;
+      }
+
+      // メインゲームシーン
       class MainScene extends Phaser.Scene {
-        // プロパティの型定義
         private player!: Phaser.Physics.Arcade.Sprite;
+        private playerBody!: Phaser.Physics.Arcade.Body;
         private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
         private controls = globalControls;
         private isMoving = false;
-        private wasJumpPressed = false; // 前フレームでジャンプボタンが押されていたか
-        // マリオ風の動きのパラメータ
-        private readonly maxSpeed = 160; // 最大速度
-        private readonly acceleration = 800; // 加速度
-        private readonly deceleration = 1000; // 減速率（摩擦）
-        private readonly airControl = 0.5; // 空中での制御性（0.0-1.0）
+        private wasJumpPressed = false;
         private map!: Phaser.Tilemaps.Tilemap;
+        private readonly maxSpeed = GAME_CONSTANTS.MOVEMENT.MAX_SPEED;
+        private readonly acceleration = GAME_CONSTANTS.MOVEMENT.ACCELERATION;
+        private readonly deceleration = GAME_CONSTANTS.MOVEMENT.DECELERATION;
+        private readonly airControl = GAME_CONSTANTS.MOVEMENT.AIR_CONTROL;
         private tileset!: Phaser.Tilemaps.Tileset;
         private backgroundLayer!: Phaser.Tilemaps.TilemapLayer;
         private platformLayer!: Phaser.Tilemaps.TilemapLayer;
+        private enemies: EnemySprite[] = [];
+        private debugGraphics!: Phaser.GameObjects.Graphics;
 
         constructor() {
           super({ key: "MainScene" });
         }
 
         preload(): void {
-          // スプライトシートの読み込み（画像の並びから、1マスを 32x48 と定義）
           this.load.spritesheet("player", "/assets/Player.png", {
-            frameWidth: 48,
-            frameHeight: 48,
+            frameWidth: GAME_CONSTANTS.PLAYER.FRAME_WIDTH,
+            frameHeight: GAME_CONSTANTS.PLAYER.FRAME_HEIGHT,
           });
 
-          // タイルマップの読み込み
-          this.load.tilemapTiledJSON("tilemap", "/assets/maps/tilemap.json");
-          this.load.image("tileset", "/assets/maps/tilesheet.png");
-        }
-
-        create(): void {
-          const mainText = this.add.text(5, 5, "本番画面", {
-            color: "#00ff00",
-            fontSize: "15px",
-          });
-          mainText.setPadding(0, 3, 0, 0);
-
-          // 本番環境ではデバッグ表示を無効化
-          this.physics.world.drawDebug = false;
-
-          // 1. タイルマップの作成
-          this.map = this.make.tilemap({ key: "tilemap" });
-          const tileset = this.map.addTilesetImage("tilesheet", "tileset");
-          if (!tileset) {
-            console.error("Failed to load tileset");
-            return;
-          }
-          this.tileset = tileset;
-
-          // 2. レイヤーの作成
-          const backgroundLayer = this.map.createLayer("background", this.tileset, 0, 0);
-          const platformLayer = this.map.createLayer("platform", this.tileset, 0, 0);
-          if (!backgroundLayer || !platformLayer) {
-            console.error("Failed to create tilemap layers");
-            return;
-          }
-          this.backgroundLayer = backgroundLayer;
-          this.platformLayer = platformLayer;
-
-          // 3. 衝突判定の設定（collidesプロパティを持つタイル）
-          this.platformLayer.setCollisionByProperty({ collides: true });
-
-          // 3-1. oneWayプロパティを持つタイルの設定（下からの衝突を無視）
-          this.platformLayer.forEachTile((tile) => {
-            if (tile.properties && tile.properties.oneWay) {
-              // 下からの衝突を無視するように設定（左, 右, 上, 下）
-              tile.setCollision(false, false, true, false);
-              // 重要：タイル自体の衝突判定（faces）を更新
-              tile.collideDown = false;
-              tile.collideLeft = false;
-              tile.collideRight = false;
-            }
+          this.load.spritesheet("spider", "/assets/Spider_1.png", {
+            frameWidth: GAME_CONSTANTS.ENEMY.DISPLAY_WIDTH,
+            frameHeight: GAME_CONSTANTS.ENEMY.DISPLAY_HEIGHT,
           });
 
-          // 4. プレイヤーの開始位置をobjectLayerから取得
-          const objectLayer = this.map.getObjectLayer("objectsLayer");
-          let playerStartX = 48;
-          let playerStartY = 48;
-          if (objectLayer) {
-            const playerObj = objectLayer.objects.find((obj) => obj.name === "player");
-            if (playerObj && playerObj.x !== undefined && playerObj.y !== undefined) {
-              playerStartX = playerObj.x;
-              playerStartY = playerObj.y;
-              console.log(`Player start position from tilemap: x=${playerStartX}, y=${playerStartY}`);
-            }
-          } else {
-            console.warn("objectsLayer not found in tilemap");
-          }
-
-          // 5. プレイヤーの生成（スプライトシートのフレーム0を使用）
-          this.player = this.physics.add.sprite(playerStartX, playerStartY, "player", 0);
-          // 表示サイズはデフォルト（48×48px）のまま
-
-          // 物理ボディのサイズとオフセットを調整（透過部分を除外）
-          const actualWidth = 16; // 実際のキャラクター幅
-          const actualHeight = 16; // 実際のキャラクター高さ
-          const frameWidth = 48;
-          const frameHeight = 48;
-
-          // オフセット = (フレームサイズ - 実際のサイズ) / 2
-          // スプライトの原点が中心(0.5, 0.5)の場合、オフセットは中心からの相対位置
-          const offsetX = (frameWidth - actualWidth) / 2;
-          const offsetY = (frameHeight - actualHeight) / 2;
-
-          const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
-          playerBody.setSize(actualWidth, actualHeight);
-          playerBody.setOffset(offsetX, offsetY);
-          playerBody.setCollideWorldBounds(true);
-
-          // 6. プレイヤーとタイルレイヤーの衝突判定を設定（oneWayタイルの特別処理）
-          this.physics.add.collider(
-            this.player,
-            this.platformLayer,
-            undefined, // 衝突コールバック（使用しない）
-            (playerObj, tileObj) => {
-              // processCallback: 衝突を処理する前に呼ばれるコールバック
-              const player = playerObj as Phaser.Physics.Arcade.Sprite;
-              const tile = tileObj as Phaser.Tilemaps.Tile;
-              const playerBody = player.body as Phaser.Physics.Arcade.Body;
-
-              if (tile.properties && tile.properties.oneWay !== true) {
-                return true;
-              }
-
-              // 1. 上昇中は絶対にすり抜ける
-              if (playerBody.velocity.y < 0) {
-                return false;
-              }
-
-              // 2. 落下中の貫通防止ロジック
-              // プレイヤーの足元の位置（今）
-              const playerBottom = playerBody.bottom;
-              // プレイヤーの足元の位置（1フレーム前）
-              const prevPlayerBottom = playerBody.prev.y + playerBody.height;
-              // タイルの上面
-              const tileTop = tile.pixelY;
-
-              // 「1フレーム前にタイルの上にいた」または「今タイルの上端より少し上にいる」なら着地
-              // 許容範囲（tolerance）を少し広めに取る（例: 8px）のがコツです
-              if (prevPlayerBottom <= tileTop + 2 || playerBottom <= tileTop + 8) {
-                return true;
-              }
-
-              return false;
-            }
-          );
-
-          // 3. アニメーションの作成
-          // 待機アニメーション（1枚目から4枚目: フレーム0-3）
-          this.anims.create({
-            key: "idle",
-            frames: this.anims.generateFrameNumbers("player", {
-              start: 0,
-              end: 3,
-            }),
-            frameRate: 8,
-            repeat: -1,
-          });
-
-          // 2行目: 歩行 (4-7番)
-          this.anims.create({
-            key: "walk",
-            frames: this.anims.generateFrameNumbers("player", {
-              start: 4,
-              end: 7,
-            }),
-            frameRate: 10,
-            repeat: -1,
-          });
-
-          // ジャンプアニメーション（上昇中: 9枚目）
-          this.anims.create({
-            key: "jump",
-            frames: [{ key: "player", frame: 8 }],
-            frameRate: 1,
-          });
-
-          // 落下アニメーション（落下中: 10枚目）
-          this.anims.create({
-            key: "fall",
-            frames: [{ key: "player", frame: 9 }],
-            frameRate: 1,
-          });
-
-          // 4. 入力系の初期化
-          if (this.input.keyboard) {
-            this.cursors = this.input.keyboard.createCursorKeys();
-          }
-
-          // 5. バーチャルコントローラーはReactコンポーネントで実装（Phaser内では作成しない）
-
-          // スペースキーでDevSceneへ切り替え
-          if (this.input.keyboard) {
-            this.input.keyboard.once("keydown-SPACE", () => {
-              this.scene.start("DevScene");
-            });
-          }
-        }
-
-
-        update(): void {
-          if (!this.player || !this.player.body) {
-            return;
-          }
-
-          const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
-          const onFloor = playerBody.touching.down || playerBody.blocked.down;
-          const deltaTime = this.game.loop.delta / 1000; // 秒単位のデルタタイム
-
-          // ジャンプ開始（地面にいる時のみ）
-          const jumpInput = this.cursors.up.isDown || globalControls.up;
-          const jumpJustPressed = (jumpInput && !this.wasJumpPressed) && onFloor;
-
-          if (jumpJustPressed) {
-            // ジャンプボタンが押された瞬間、最大ジャンプの初速を設定
-            playerBody.setVelocityY(-350); // 最大ジャンプの初速（元のジャンプの高さ）
-            this.player.play("jump", true);
-            // globalControls.upは、ボタンが離されるまでtrueのまま維持（キーボード入力と同じ動作）
-          }
-
-          // 上昇中にボタンが離されたら、上向きの速度を急ブレーキさせる
-          if (!jumpInput && this.wasJumpPressed && playerBody.velocity.y < 0 && !onFloor) {
-            // 現在の速度を20%にする（または 0 に近づける）
-            playerBody.setVelocityY(playerBody.velocity.y * 0.2);
-          }
-
-          // 前フレームの状態を更新
-          this.wasJumpPressed = jumpInput;
-
-          // マリオ風の左右移動（加速度ベース）
-          const leftInput = this.cursors.left.isDown || globalControls.left;
-          const rightInput = this.cursors.right.isDown || globalControls.right;
-          const currentVelocityX = playerBody.velocity.x;
-
-          if (leftInput) {
-            // 左入力
-            const controlFactor = onFloor ? 1.0 : this.airControl;
-            const targetVelocity = -this.maxSpeed * controlFactor;
-            
-            if (currentVelocityX > targetVelocity) {
-              // 減速または加速
-              const accel = onFloor ? this.acceleration : this.acceleration * this.airControl;
-              const newVelocity = Math.max(
-                currentVelocityX - accel * deltaTime,
-                targetVelocity
-              );
-              playerBody.setVelocityX(newVelocity);
-            }
-            this.player.setFlipX(true);
-            this.isMoving = true;
-            if (onFloor) {
-              this.player.play("walk", true);
-            } else {
-              // 空中にいる場合、velocity.yに基づいてアニメーションを選択
-              if (playerBody.velocity.y < 0) {
-                this.player.play("jump", true); // ジャンプ中（上昇中）
-              } else {
-                this.player.play("fall", true); // 落下中
-              }
-            }
-          } else if (rightInput) {
-            // 右入力
-            const controlFactor = onFloor ? 1.0 : this.airControl;
-            const targetVelocity = this.maxSpeed * controlFactor;
-            
-            if (currentVelocityX < targetVelocity) {
-              // 減速または加速
-              const accel = onFloor ? this.acceleration : this.acceleration * this.airControl;
-              const newVelocity = Math.min(
-                currentVelocityX + accel * deltaTime,
-                targetVelocity
-              );
-              playerBody.setVelocityX(newVelocity);
-            }
-            this.player.setFlipX(false);
-            this.isMoving = true;
-            if (onFloor) {
-              this.player.play("walk", true);
-            } else {
-              // 空中にいる場合、velocity.yに基づいてアニメーションを選択
-              if (playerBody.velocity.y < 0) {
-                this.player.play("jump", true); // ジャンプ中（上昇中）
-              } else {
-                this.player.play("fall", true); // 落下中
-              }
-            }
-          } else {
-            // 入力がない場合
-            if (onFloor) {
-              // 地面にいる時は減速（摩擦）
-              if (Math.abs(currentVelocityX) > 10) {
-                // 速度が大きい場合は減速
-                const decel = this.deceleration * deltaTime;
-                if (currentVelocityX > 0) {
-                  playerBody.setVelocityX(Math.max(0, currentVelocityX - decel));
-                } else {
-                  playerBody.setVelocityX(Math.min(0, currentVelocityX + decel));
-                }
-                this.isMoving = true;
-                this.player.play("walk", true);
-              } else {
-                // 速度が小さい場合は停止
-                playerBody.setVelocityX(0);
-                this.isMoving = false;
-                this.player.play("idle", true);
-              }
-            } else {
-              // ジャンプ中（空中）は、現在のX方向の速度を維持（慣性を維持）
-              // velocity.yに基づいてアニメーションを選択
-              if (playerBody.velocity.y < 0) {
-                this.player.play("jump", true); // ジャンプ中（上昇中）
-              } else {
-                this.player.play("fall", true); // 落下中
-              }
-            }
-          }
-        }
-      }
-
-      // 開発ゲームシーン
-      class DevScene extends Phaser.Scene {
-        // プロパティの型定義
-        private player!: Phaser.Physics.Arcade.Sprite;
-        private playerBody!: Phaser.Physics.Arcade.Body;
-        private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-        private controls = globalControls;
-        private isMoving = false;
-        private wasJumpPressed = false; // 前フレームでジャンプボタンが押されていたか
-        private map!: Phaser.Tilemaps.Tilemap;
-        // マリオ風の動きのパラメータ
-        private readonly maxSpeed = 160; // 最大速度
-        private readonly acceleration = 800; // 加速度
-        private readonly deceleration = 1000; // 減速率（摩擦）
-        private readonly airControl = 0.5; // 空中での制御性（0.0-1.0）
-        private tileset!: Phaser.Tilemaps.Tileset;
-        private backgroundLayer!: Phaser.Tilemaps.TilemapLayer;
-        private platformLayer!: Phaser.Tilemaps.TilemapLayer;
-
-        constructor() {
-          super({ key: "DevScene" });
-        }
-
-        preload(): void {
-          // スプライトシートの読み込み（MainSceneと同じ）
-          this.load.spritesheet("player", "/assets/Player.png", {
-            frameWidth: 48,
-            frameHeight: 48,
-          });
-
-          // タイルマップの読み込み
           this.load.tilemapTiledJSON("tilemap", "/assets/maps/tilemap.json");
           this.load.image("tileset", "/assets/maps/tilesheet.png");
         }
 
         create() {
-          const devText = this.add.text(5, 5, "開発画面", {
-            color: "#ff0000",
-            fontSize: "15px",
-          });
-          devText.setPadding(0, 3, 0, 0);
+          this.physics.world.drawDebug = isDebug;
+          this.setupTilemap();
+          const objectLayer = this.setupPlayer();
+          this.setupCamera();
+          this.setupPlayerCollision();
+          this.createAnimations();
+          this.createEnemies(objectLayer);
+          this.setupInput();
+          this.debugGraphics = this.add.graphics();
+        }
 
-          // 1. タイルマップの作成
+        private setupTilemap(): void {
           this.map = this.make.tilemap({ key: "tilemap" });
           const tileset = this.map.addTilesetImage("tilesheet", "tileset");
           if (!tileset) {
@@ -465,9 +202,18 @@ export default function GamePage() {
           }
           this.tileset = tileset;
 
-          // 2. レイヤーの作成
-          const backgroundLayer = this.map.createLayer("background", this.tileset, 0, 0);
-          const platformLayer = this.map.createLayer("platform", this.tileset, 0, 0);
+          const backgroundLayer = this.map.createLayer(
+            "background",
+            this.tileset,
+            0,
+            0,
+          );
+          const platformLayer = this.map.createLayer(
+            "platform",
+            this.tileset,
+            0,
+            0,
+          );
           if (!backgroundLayer || !platformLayer) {
             console.error("Failed to create tilemap layers");
             return;
@@ -475,63 +221,85 @@ export default function GamePage() {
           this.backgroundLayer = backgroundLayer;
           this.platformLayer = platformLayer;
 
-          // 3. 衝突判定の設定（collidesプロパティを持つタイル）
           this.platformLayer.setCollisionByProperty({ collides: true });
 
-          // 3-1. oneWayプロパティを持つタイルの設定（下からの衝突を無視）
+          // oneWayタイルの設定
           this.platformLayer.forEachTile((tile) => {
             if (tile.properties && tile.properties.oneWay) {
-              // 下からの衝突を無視するように設定（左, 右, 上, 下）
               tile.setCollision(false, false, true, false);
-              // 重要：タイル自体の衝突判定（faces）を更新
               tile.collideDown = false;
               tile.collideLeft = false;
               tile.collideRight = false;
             }
           });
+        }
 
-          // 4. プレイヤーの開始位置をobjectLayerから取得
+        private setupPlayer(): Phaser.Tilemaps.ObjectLayer | null {
           const objectLayer = this.map.getObjectLayer("objectsLayer");
-          let playerStartX = 48;
-          let playerStartY = 48;
+          let playerStartX = GAME_CONSTANTS.PLAYER.DEFAULT_START_X;
+          let playerStartY = GAME_CONSTANTS.PLAYER.DEFAULT_START_Y;
+
           if (objectLayer) {
-            const playerObj = objectLayer.objects.find((obj) => obj.name === "player");
-            if (playerObj && playerObj.x !== undefined && playerObj.y !== undefined) {
+            const playerObj = objectLayer.objects.find(
+              (obj) => obj.name === "player",
+            );
+            if (
+              playerObj &&
+              playerObj.x !== undefined &&
+              playerObj.y !== undefined
+            ) {
               playerStartX = playerObj.x;
               playerStartY = playerObj.y;
-              console.log(`Player start position from tilemap: x=${playerStartX}, y=${playerStartY}`);
             }
-          } else {
-            console.warn("objectsLayer not found in tilemap");
           }
 
-          // 5. プレイヤーの生成（スプライトシートのフレーム0を使用）
-          this.player = this.physics.add.sprite(playerStartX, playerStartY, "player", 0);
-          // 表示サイズはデフォルト（48×48px）のまま
+          this.player = this.physics.add.sprite(
+            playerStartX,
+            playerStartY,
+            "player",
+            0,
+          );
 
-          // 物理ボディのサイズとオフセットを調整（透過部分を除外）
-          const actualWidth = 16; // 実際のキャラクター幅
-          const actualHeight = 16; // 実際のキャラクター高さ
-          const frameWidth = 48;
-          const frameHeight = 48;
-
-          // オフセット = (フレームサイズ - 実際のサイズ) / 2
-          // スプライトの原点が中心(0.5, 0.5)の場合、オフセットは中心からの相対位置
-          const offsetX = (frameWidth - actualWidth) / 2;
-          const offsetY = (frameHeight - actualHeight) / 2;
+          const offsetX =
+            (GAME_CONSTANTS.PLAYER.FRAME_WIDTH -
+              GAME_CONSTANTS.PLAYER.ACTUAL_WIDTH) /
+            2;
+          const offsetY =
+            (GAME_CONSTANTS.PLAYER.FRAME_HEIGHT -
+              GAME_CONSTANTS.PLAYER.ACTUAL_HEIGHT) /
+            2;
 
           this.playerBody = this.player.body as Phaser.Physics.Arcade.Body;
-          this.playerBody.setSize(actualWidth, actualHeight);
+          this.playerBody.setSize(
+            GAME_CONSTANTS.PLAYER.ACTUAL_WIDTH,
+            GAME_CONSTANTS.PLAYER.ACTUAL_HEIGHT,
+          );
           this.playerBody.setOffset(offsetX, offsetY);
           this.playerBody.setCollideWorldBounds(true);
 
-          // 6. プレイヤーとタイルレイヤーの衝突判定を設定（oneWayタイルの特別処理）
+          return objectLayer;
+        }
+
+        private setupCamera(): void {
+          const mapWidth = this.map.widthInPixels;
+          const mapHeight = this.map.heightInPixels;
+
+          this.cameras.main.startFollow(
+            this.player,
+            true,
+            GAME_CONSTANTS.CAMERA.FOLLOW_LERP_X,
+            GAME_CONSTANTS.CAMERA.FOLLOW_LERP_Y,
+          );
+          this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
+          this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
+        }
+
+        private setupPlayerCollision(): void {
           this.physics.add.collider(
             this.player,
             this.platformLayer,
-            undefined, // 衝突コールバック（使用しない）
+            undefined,
             (playerObj, tileObj) => {
-              // processCallback: 衝突を処理する前に呼ばれるコールバック
               const player = playerObj as Phaser.Physics.Arcade.Sprite;
               const tile = tileObj as Phaser.Tilemaps.Tile;
               const playerBody = player.body as Phaser.Physics.Arcade.Body;
@@ -540,31 +308,29 @@ export default function GamePage() {
                 return true;
               }
 
-              // 1. 上昇中は絶対にすり抜ける
               if (playerBody.velocity.y < 0) {
                 return false;
               }
 
-              // 2. 落下中の貫通防止ロジック
-              // プレイヤーの足元の位置（今）
               const playerBottom = playerBody.bottom;
-              // プレイヤーの足元の位置（1フレーム前）
               const prevPlayerBottom = playerBody.prev.y + playerBody.height;
-              // タイルの上面
               const tileTop = tile.pixelY;
 
-              // 「1フレーム前にタイルの上にいた」または「今タイルの上端より少し上にいる」なら着地
-              // 許容範囲（tolerance）を少し広めに取る（例: 8px）のがコツです
-              if (prevPlayerBottom <= tileTop + 2 || playerBottom <= tileTop + 8) {
+              if (
+                prevPlayerBottom <=
+                  tileTop + GAME_CONSTANTS.COLLISION.ONE_WAY_TOLERANCE_PREV ||
+                playerBottom <=
+                  tileTop + GAME_CONSTANTS.COLLISION.ONE_WAY_TOLERANCE_CURRENT
+              ) {
                 return true;
               }
 
               return false;
-            }
+            },
           );
+        }
 
-          // 3. アニメーションの作成
-          // 待機アニメーション（1枚目から4枚目: フレーム0-3）
+        private createAnimations(): void {
           this.anims.create({
             key: "idle",
             frames: this.anims.generateFrameNumbers("player", {
@@ -575,7 +341,6 @@ export default function GamePage() {
             repeat: -1,
           });
 
-          // 歩行アニメーション (4-7番)
           this.anims.create({
             key: "walk",
             frames: this.anims.generateFrameNumbers("player", {
@@ -586,35 +351,86 @@ export default function GamePage() {
             repeat: -1,
           });
 
-          // ジャンプアニメーション（上昇中: 9枚目）
           this.anims.create({
             key: "jump",
             frames: [{ key: "player", frame: 8 }],
             frameRate: 1,
           });
 
-          // 落下アニメーション（落下中: 10枚目）
           this.anims.create({
             key: "fall",
             frames: [{ key: "player", frame: 9 }],
             frameRate: 1,
           });
 
-          // 4. 入力系の初期化
+          this.anims.create({
+            key: "spider-walk",
+            frames: this.anims.generateFrameNumbers("spider", {
+              start: 0,
+              end: 2,
+            }),
+            frameRate: 8,
+            repeat: -1,
+          });
+        }
+
+        private createEnemies(
+          objectLayer: Phaser.Tilemaps.ObjectLayer | null,
+        ): void {
+          this.enemies = [];
+          if (!objectLayer) return;
+
+          const enemyObjects = objectLayer.objects.filter(
+            (obj) => obj.name === "Spider_1",
+          );
+
+          enemyObjects.forEach((enemyObj) => {
+            if (enemyObj.x !== undefined && enemyObj.y !== undefined) {
+              const enemy = this.physics.add.sprite(
+                enemyObj.x,
+                enemyObj.y,
+                "spider",
+                0,
+              ) as EnemySprite;
+
+              enemy.setDisplaySize(
+                GAME_CONSTANTS.ENEMY.DISPLAY_WIDTH,
+                GAME_CONSTANTS.ENEMY.DISPLAY_HEIGHT,
+              );
+
+              const enemyBody = enemy.body as Phaser.Physics.Arcade.Body;
+              enemyBody.setSize(
+                GAME_CONSTANTS.ENEMY.BODY_WIDTH,
+                GAME_CONSTANTS.ENEMY.BODY_HEIGHT,
+              );
+              enemyBody.setOffset(
+                GAME_CONSTANTS.ENEMY.OFFSET_X,
+                GAME_CONSTANTS.ENEMY.OFFSET_Y,
+              );
+              enemyBody.setCollideWorldBounds(true);
+
+              enemy.moveDirection = GAME_CONSTANTS.ENEMY.INITIAL_DIRECTION;
+              enemy.setFlipX(false);
+              enemy.play("spider-walk", true);
+
+              this.physics.add.collider(enemy, this.platformLayer, () => {
+                const enemyBody = enemy.body as Phaser.Physics.Arcade.Body;
+                if (enemyBody.blocked.left || enemyBody.blocked.right) {
+                  enemy.moveDirection *= -1;
+                  enemy.setFlipX(enemy.moveDirection > 0);
+                }
+              });
+
+              this.enemies.push(enemy);
+            }
+          });
+        }
+
+        private setupInput(): void {
           if (this.input.keyboard) {
             this.cursors = this.input.keyboard.createCursorKeys();
           }
-
-          // 4. バーチャルコントローラーはReactコンポーネントで実装（Phaser内では作成しない）
-
-          // スペースキーでMainSceneへ切り替え
-          if (this.input.keyboard) {
-            this.input.keyboard.once("keydown-SPACE", () => {
-              this.scene.start("MainScene");
-            });
-          }
         }
-
 
         update(): void {
           if (!this.player || !this.player.body) {
@@ -622,116 +438,227 @@ export default function GamePage() {
           }
 
           const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
-          const onFloor = playerBody.touching.down || playerBody.blocked.down;
-          const deltaTime = this.game.loop.delta / 1000; // 秒単位のデルタタイム
+          const deltaTime = this.game.loop.delta / 1000;
 
-          // ジャンプ開始（地面にいる時のみ）
+          this.handleJump(playerBody);
+          this.handleMovement(playerBody, deltaTime);
+          this.updateEnemies();
+        }
+
+        private handleJump(playerBody: Phaser.Physics.Arcade.Body): void {
+          const onFloor = playerBody.touching.down || playerBody.blocked.down;
           const jumpInput = this.cursors.up.isDown || globalControls.up;
-          const jumpJustPressed = (jumpInput && !this.wasJumpPressed) && onFloor;
+          const jumpJustPressed = jumpInput && !this.wasJumpPressed && onFloor;
 
           if (jumpJustPressed) {
-            // ジャンプボタンが押された瞬間、最大ジャンプの初速を設定
-            playerBody.setVelocityY(-350); // 最大ジャンプの初速（元のジャンプの高さ）
+            playerBody.setVelocityY(GAME_CONSTANTS.MOVEMENT.JUMP_VELOCITY);
             this.player.play("jump", true);
-            // globalControls.upは、ボタンが離されるまでtrueのまま維持（キーボード入力と同じ動作）
           }
 
-          // 上昇中にボタンが離されたら、上向きの速度を急ブレーキさせる
-          if (!jumpInput && this.wasJumpPressed && playerBody.velocity.y < 0 && !onFloor) {
-            // 現在の速度を20%にする（または 0 に近づける）
-            playerBody.setVelocityY(playerBody.velocity.y * 0.2);
+          if (
+            !jumpInput &&
+            this.wasJumpPressed &&
+            playerBody.velocity.y < 0 &&
+            !onFloor
+          ) {
+            playerBody.setVelocityY(
+              playerBody.velocity.y *
+                GAME_CONSTANTS.MOVEMENT.JUMP_CANCEL_FACTOR,
+            );
           }
 
-          // 前フレームの状態を更新
           this.wasJumpPressed = jumpInput;
+        }
 
-          // マリオ風の左右移動（加速度ベース）
+        private handleMovement(
+          playerBody: Phaser.Physics.Arcade.Body,
+          deltaTime: number,
+        ): void {
+          const onFloor = playerBody.touching.down || playerBody.blocked.down;
           const leftInput = this.cursors.left.isDown || globalControls.left;
           const rightInput = this.cursors.right.isDown || globalControls.right;
           const currentVelocityX = playerBody.velocity.x;
 
           if (leftInput) {
-            // 左入力
-            const controlFactor = onFloor ? 1.0 : this.airControl;
-            const targetVelocity = -this.maxSpeed * controlFactor;
-            
-            if (currentVelocityX > targetVelocity) {
-              // 減速または加速
-              const accel = onFloor ? this.acceleration : this.acceleration * this.airControl;
-              const newVelocity = Math.max(
-                currentVelocityX - accel * deltaTime,
-                targetVelocity
-              );
-              playerBody.setVelocityX(newVelocity);
-            }
-            this.player.setFlipX(true);
-            this.isMoving = true;
-            if (onFloor) {
-              this.player.play("walk", true);
-            } else {
-              // 空中にいる場合、velocity.yに基づいてアニメーションを選択
-              if (playerBody.velocity.y < 0) {
-                this.player.play("jump", true); // ジャンプ中（上昇中）
-              } else {
-                this.player.play("fall", true); // 落下中
-              }
-            }
+            this.handleLeftMovement(
+              playerBody,
+              onFloor,
+              currentVelocityX,
+              deltaTime,
+            );
           } else if (rightInput) {
-            // 右入力
-            const controlFactor = onFloor ? 1.0 : this.airControl;
-            const targetVelocity = this.maxSpeed * controlFactor;
-            
-            if (currentVelocityX < targetVelocity) {
-              // 減速または加速
-              const accel = onFloor ? this.acceleration : this.acceleration * this.airControl;
-              const newVelocity = Math.min(
-                currentVelocityX + accel * deltaTime,
-                targetVelocity
-              );
-              playerBody.setVelocityX(newVelocity);
-            }
-            this.player.setFlipX(false);
-            this.isMoving = true;
-            if (onFloor) {
+            this.handleRightMovement(
+              playerBody,
+              onFloor,
+              currentVelocityX,
+              deltaTime,
+            );
+          } else {
+            this.handleNoInput(
+              playerBody,
+              onFloor,
+              currentVelocityX,
+              deltaTime,
+            );
+          }
+        }
+
+        private handleLeftMovement(
+          playerBody: Phaser.Physics.Arcade.Body,
+          onFloor: boolean,
+          currentVelocityX: number,
+          deltaTime: number,
+        ): void {
+          const controlFactor = onFloor ? 1.0 : this.airControl;
+          const targetVelocity = -this.maxSpeed * controlFactor;
+
+          if (currentVelocityX > targetVelocity) {
+            const accel = onFloor
+              ? this.acceleration
+              : this.acceleration * this.airControl;
+            const newVelocity = Math.max(
+              currentVelocityX - accel * deltaTime,
+              targetVelocity,
+            );
+            playerBody.setVelocityX(newVelocity);
+          }
+
+          this.player.setFlipX(true);
+          this.isMoving = true;
+          this.updatePlayerAnimation(playerBody, onFloor);
+        }
+
+        private handleRightMovement(
+          playerBody: Phaser.Physics.Arcade.Body,
+          onFloor: boolean,
+          currentVelocityX: number,
+          deltaTime: number,
+        ): void {
+          const controlFactor = onFloor ? 1.0 : this.airControl;
+          const targetVelocity = this.maxSpeed * controlFactor;
+
+          if (currentVelocityX < targetVelocity) {
+            const accel = onFloor
+              ? this.acceleration
+              : this.acceleration * this.airControl;
+            const newVelocity = Math.min(
+              currentVelocityX + accel * deltaTime,
+              targetVelocity,
+            );
+            playerBody.setVelocityX(newVelocity);
+          }
+
+          this.player.setFlipX(false);
+          this.isMoving = true;
+          this.updatePlayerAnimation(playerBody, onFloor);
+        }
+
+        private handleNoInput(
+          playerBody: Phaser.Physics.Arcade.Body,
+          onFloor: boolean,
+          currentVelocityX: number,
+          deltaTime: number,
+        ): void {
+          if (onFloor) {
+            if (
+              Math.abs(currentVelocityX) >
+              GAME_CONSTANTS.MOVEMENT.MIN_VELOCITY_THRESHOLD
+            ) {
+              const decel = this.deceleration * deltaTime;
+              if (currentVelocityX > 0) {
+                playerBody.setVelocityX(Math.max(0, currentVelocityX - decel));
+              } else {
+                playerBody.setVelocityX(Math.min(0, currentVelocityX + decel));
+              }
+              this.isMoving = true;
               this.player.play("walk", true);
             } else {
-              // 空中にいる場合、velocity.yに基づいてアニメーションを選択
-              if (playerBody.velocity.y < 0) {
-                this.player.play("jump", true); // ジャンプ中（上昇中）
-              } else {
-                this.player.play("fall", true); // 落下中
-              }
+              playerBody.setVelocityX(0);
+              this.isMoving = false;
+              this.player.play("idle", true);
             }
           } else {
-            // 入力がない場合
-            if (onFloor) {
-              // 地面にいる時は減速（摩擦）
-              if (Math.abs(currentVelocityX) > 10) {
-                // 速度が大きい場合は減速
-                const decel = this.deceleration * deltaTime;
-                if (currentVelocityX > 0) {
-                  playerBody.setVelocityX(Math.max(0, currentVelocityX - decel));
-                } else {
-                  playerBody.setVelocityX(Math.min(0, currentVelocityX + decel));
-                }
-                this.isMoving = true;
-                this.player.play("walk", true);
-              } else {
-                // 速度が小さい場合は停止
-                playerBody.setVelocityX(0);
-                this.isMoving = false;
-                this.player.play("idle", true);
-              }
+            this.updatePlayerAnimation(playerBody, onFloor);
+          }
+        }
+
+        private updatePlayerAnimation(
+          playerBody: Phaser.Physics.Arcade.Body,
+          onFloor: boolean,
+        ): void {
+          if (onFloor) {
+            this.player.play("walk", true);
+          } else {
+            if (playerBody.velocity.y < 0) {
+              this.player.play("jump", true);
             } else {
-              // ジャンプ中（空中）は、現在のX方向の速度を維持（慣性を維持）
-              // velocity.yに基づいてアニメーションを選択
-              if (playerBody.velocity.y < 0) {
-                this.player.play("jump", true); // ジャンプ中（上昇中）
-              } else {
-                this.player.play("fall", true); // 落下中
-              }
+              this.player.play("fall", true);
             }
           }
+        }
+
+        private updateEnemies(): void {
+          this.debugGraphics.clear();
+
+          this.enemies.forEach((enemy) => {
+            const enemyBody = enemy.body as Phaser.Physics.Arcade.Body;
+
+            if (enemy.moveDirection === undefined) {
+              enemy.moveDirection = GAME_CONSTANTS.ENEMY.INITIAL_DIRECTION;
+            }
+
+            const { checkX, checkY } = this.getEnemySensorPosition(
+              enemy,
+              enemyBody,
+            );
+            const hasFloor = this.checkEnemyFloor(checkX, checkY);
+            const hitWall = enemyBody.blocked.left || enemyBody.blocked.right;
+            const isGake = !hasFloor && enemyBody.blocked.down;
+
+            if (hitWall || isGake) {
+              this.flipEnemy(enemy, enemyBody);
+            }
+
+            enemyBody.setVelocityX(
+              GAME_CONSTANTS.ENEMY.SPEED_X * enemy.moveDirection,
+            );
+
+            if (!enemyBody.blocked.down) {
+              enemyBody.setVelocityY(GAME_CONSTANTS.ENEMY.SPEED_Y);
+            }
+          });
+        }
+
+        private getEnemySensorPosition(
+          enemy: EnemySprite,
+          enemyBody: Phaser.Physics.Arcade.Body,
+        ): { checkX: number; checkY: number } {
+          const checkX =
+            enemy.moveDirection > 0
+              ? enemyBody.right + GAME_CONSTANTS.ENEMY.SENSOR_DISTANCE
+              : enemyBody.x - GAME_CONSTANTS.ENEMY.SENSOR_DISTANCE;
+          const checkY =
+            enemyBody.bottom + GAME_CONSTANTS.ENEMY.SENSOR_DISTANCE;
+
+          return { checkX, checkY };
+        }
+
+        private checkEnemyFloor(checkX: number, checkY: number): boolean {
+          const tileAhead = this.platformLayer.getTileAtWorldXY(checkX, checkY);
+          return (
+            !!tileAhead &&
+            (tileAhead.properties.collides || tileAhead.properties.oneWay)
+          );
+        }
+
+        private flipEnemy(
+          enemy: EnemySprite,
+          enemyBody: Phaser.Physics.Arcade.Body,
+        ): void {
+          enemy.moveDirection *= -1;
+          enemy.setFlipX(enemy.moveDirection > 0);
+          enemy.x += enemy.moveDirection * GAME_CONSTANTS.ENEMY.FLIP_ADJUST;
+          enemyBody.setVelocityY(0);
         }
       }
 
@@ -755,7 +682,7 @@ export default function GamePage() {
                 fontSize: "32px",
                 color: "#ecf0f1",
                 fontFamily: "Arial",
-              }
+              },
             )
             .setOrigin(0.5);
 
@@ -769,7 +696,7 @@ export default function GamePage() {
                 fontSize: "16px",
                 color: "#2c3e50",
                 fontFamily: "Arial",
-              }
+              },
             )
             .setOrigin(0.5);
 
@@ -789,7 +716,7 @@ export default function GamePage() {
       }
 
       const scenes = isDebug
-        ? [DevScene, MainScene, TitleScene, ClearScene]
+        ? [MainScene, TitleScene, ClearScene]
         : [TitleScene, MainScene, ClearScene];
       const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
@@ -889,12 +816,7 @@ export default function GamePage() {
               : "bg-white scale-100"
           }`}
         >
-          <svg
-            width="32"
-            height="32"
-            viewBox="0 0 24 24"
-            fill="black"
-          >
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="black">
             <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
           </svg>
         </button>
@@ -912,12 +834,7 @@ export default function GamePage() {
               : "bg-white scale-100"
           }`}
         >
-          <svg
-            width="32"
-            height="32"
-            viewBox="0 0 24 24"
-            fill="black"
-          >
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="black">
             <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
           </svg>
         </button>
